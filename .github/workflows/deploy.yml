@@ -59,7 +59,7 @@ jobs:
               chmod +x goose
             fi
 
-            ./goose -dir ./migrations postgres "postgres://postgres:postgres@localhost:5432/tg_craft_bot?sslmode=disable" up
+            ./goose -dir ./migrations postgres "postgres://postgres:625325@localhost:5432/craft_bot?sslmode=disable" up
 
             systemctl restart tg-bot
             systemctl status tg-bot --no-pager
