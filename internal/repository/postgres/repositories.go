@@ -232,20 +232,20 @@ func (r *OrderRepository) CreateAtTail(ctx context.Context, o *domain.Order) (*d
 
 	q := `
 insert into orders (
-    user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty,
+    user_id, telegram_id, nickname, recipe_key, recipe_name, recipe_kind, qty,
     status, queue_pos, created_at, queued_at, version
-) values ($1,$2,$3,$4,$5,$6,$7,$8,'new',$9,now(),now(),1)
-returning id, user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty,
+) values ($1,$2,$3,$4,$5,$6,$7,'new',$8,now(),now(),1)
+returning id, user_id, telegram_id, nickname, recipe_key, recipe_name, recipe_kind, qty,
           status, queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
           completed_at, cancelled_at, admin_comment, version
 `
+
 	var out domain.Order
 	err = r.db.QueryRow(
 		ctx,
 		q,
 		o.UserID,
 		o.TelegramID,
-		o.TelegramUsername,
 		o.Nickname,
 		o.RecipeKey,
 		o.RecipeName,
@@ -256,7 +256,6 @@ returning id, user_id, telegram_id, telegram_username, nickname, recipe_key, rec
 		&out.ID,
 		&out.UserID,
 		&out.TelegramID,
-		&out.TelegramUsername,
 		&out.Nickname,
 		&out.RecipeKey,
 		&out.RecipeName,
@@ -277,17 +276,24 @@ returning id, user_id, telegram_id, telegram_username, nickname, recipe_key, rec
 	if err != nil {
 		return nil, fmt.Errorf("create order: %w", err)
 	}
+
+	// Для только что созданного заказа можно вернуть username из входной модели,
+	// если сервис его уже знает. В БД оно не хранится в orders, а дальше будет
+	// подставляться через JOIN users.username.
+	out.TelegramUsername = o.TelegramUsername
+
 	return &out, nil
 }
 
 func (r *OrderRepository) GetActiveByTelegramID(ctx context.Context, telegramID int64) (*domain.Order, error) {
 	q := `
-select id, user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
-       queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
-       completed_at, cancelled_at, admin_comment, version
-from orders
-where telegram_id = $1 and status in ('new', 'in_progress', 'ready')
-order by created_at desc
+select o.id, o.user_id, o.telegram_id, u.username, o.nickname, o.recipe_key, o.recipe_name, o.recipe_kind, o.qty, o.status,
+       o.queue_pos, o.created_at, o.queued_at, o.started_at, o.ready_at, o.pickup_deadline_at,
+       o.completed_at, o.cancelled_at, o.admin_comment, o.version
+from orders o
+left join users u on u.id = o.user_id
+where o.telegram_id = $1 and o.status in ('new', 'in_progress', 'ready')
+order by o.created_at desc
 limit 1
 `
 	return scanOrder(r.db.QueryRow(ctx, q, telegramID))
@@ -295,22 +301,24 @@ limit 1
 
 func (r *OrderRepository) GetByID(ctx context.Context, id int64) (*domain.Order, error) {
 	q := `
-select id, user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
-       queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
-       completed_at, cancelled_at, admin_comment, version
-from orders
-where id = $1
+select o.id, o.user_id, o.telegram_id, u.username, o.nickname, o.recipe_key, o.recipe_name, o.recipe_kind, o.qty, o.status,
+       o.queue_pos, o.created_at, o.queued_at, o.started_at, o.ready_at, o.pickup_deadline_at,
+       o.completed_at, o.cancelled_at, o.admin_comment, o.version
+from orders o
+left join users u on u.id = o.user_id
+where o.id = $1
 `
 	return scanOrder(r.db.QueryRow(ctx, q, id))
 }
 
 func (r *OrderRepository) GetByIDForUpdate(ctx context.Context, id int64) (*domain.Order, error) {
 	q := `
-select id, user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
-       queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
-       completed_at, cancelled_at, admin_comment, version
-from orders
-where id = $1
+select o.id, o.user_id, o.telegram_id, u.username, o.nickname, o.recipe_key, o.recipe_name, o.recipe_kind, o.qty, o.status,
+       o.queue_pos, o.created_at, o.queued_at, o.started_at, o.ready_at, o.pickup_deadline_at,
+       o.completed_at, o.cancelled_at, o.admin_comment, o.version
+from orders o
+left join users u on u.id = o.user_id
+where o.id = $1
 for update
 `
 	return scanOrder(r.db.QueryRow(ctx, q, id))
@@ -412,12 +420,13 @@ where id = $1 and status in ('ready', 'in_progress')
 
 func (r *OrderRepository) ListQueue(ctx context.Context) ([]domain.Order, error) {
 	q := `
-select id, user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
-       queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
-       completed_at, cancelled_at, admin_comment, version
-from orders
-where status = 'new'
-order by queue_pos asc, created_at asc, id asc
+select o.id, o.user_id, o.telegram_id, u.username, o.nickname, o.recipe_key, o.recipe_name, o.recipe_kind, o.qty, o.status,
+       o.queue_pos, o.created_at, o.queued_at, o.started_at, o.ready_at, o.pickup_deadline_at,
+       o.completed_at, o.cancelled_at, o.admin_comment, o.version
+from orders o
+left join users u on u.id = o.user_id
+where o.status = 'new'
+order by o.queue_pos asc, o.created_at asc, o.id asc
 `
 	rows, err := r.db.Query(ctx, q)
 	if err != nil {
@@ -447,13 +456,14 @@ func (r *OrderRepository) ListQueueByKinds(ctx context.Context, kinds ...domain.
 	}
 
 	q := `
-select id, user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
-       queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
-       completed_at, cancelled_at, admin_comment, version
-from orders
-where status = 'new'
-  and recipe_kind = any($1)
-order by queue_pos asc, created_at asc, id asc
+select o.id, o.user_id, o.telegram_id, u.username, o.nickname, o.recipe_key, o.recipe_name, o.recipe_kind, o.qty, o.status,
+       o.queue_pos, o.created_at, o.queued_at, o.started_at, o.ready_at, o.pickup_deadline_at,
+       o.completed_at, o.cancelled_at, o.admin_comment, o.version
+from orders o
+left join users u on u.id = o.user_id
+where o.status = 'new'
+  and o.recipe_kind = any($1)
+order by o.queue_pos asc, o.created_at asc, o.id asc
 `
 	rows, err := r.db.Query(ctx, q, args)
 	if err != nil {
@@ -478,12 +488,13 @@ func (r *OrderRepository) ListByStatus(ctx context.Context, statuses ...domain.O
 	}
 
 	q := `
-select id, user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
-       queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
-       completed_at, cancelled_at, admin_comment, version
-from orders
-where status = any($1)
-order by created_at asc, id asc
+select o.id, o.user_id, o.telegram_id, u.username, o.nickname, o.recipe_key, o.recipe_name, o.recipe_kind, o.qty, o.status,
+       o.queue_pos, o.created_at, o.queued_at, o.started_at, o.ready_at, o.pickup_deadline_at,
+       o.completed_at, o.cancelled_at, o.admin_comment, o.version
+from orders o
+left join users u on u.id = o.user_id
+where o.status = any($1)
+order by o.created_at asc, o.id asc
 `
 	args := make([]string, 0, len(statuses))
 	for _, s := range statuses {
