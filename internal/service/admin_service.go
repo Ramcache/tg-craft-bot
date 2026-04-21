@@ -169,6 +169,11 @@ func (s *AdminService) CreateBulkOrdersByNicknames(ctx context.Context, adminTel
 
 func (s *AdminService) StartCraft(ctx context.Context, adminTelegramID, orderID int64) (*domain.Order, error) {
 	if err := s.ensureAdmin(ctx, adminTelegramID); err != nil {
+		s.log.Error("start craft ensure admin failed",
+			zap.Error(err),
+			zap.Int64("admin_telegram_id", adminTelegramID),
+			zap.Int64("order_id", orderID),
+		)
 		return nil, err
 	}
 
@@ -179,14 +184,33 @@ func (s *AdminService) StartCraft(ctx context.Context, adminTelegramID, orderID 
 
 		order, err := orders.GetByIDForUpdate(ctx, orderID)
 		if err != nil {
+			s.log.Error("start craft get by id for update failed",
+				zap.Error(err),
+				zap.Int64("order_id", orderID),
+			)
 			return err
 		}
+
+		s.log.Info("start craft order loaded",
+			zap.Int64("order_id", order.ID),
+			zap.String("status", string(order.Status)),
+			zap.String("recipe_key", order.RecipeKey),
+		)
+
 		if order.Status != domain.OrderStatusNew {
+			s.log.Error("start craft invalid status",
+				zap.Int64("order_id", order.ID),
+				zap.String("status", string(order.Status)),
+			)
 			return domain.ErrOrderInvalidStatus
 		}
 
 		recipe, ok := s.recipes.Get(order.RecipeKey)
 		if !ok {
+			s.log.Error("start craft recipe not found",
+				zap.Int64("order_id", order.ID),
+				zap.String("recipe_key", order.RecipeKey),
+			)
 			return domain.ErrRecipeNotFound
 		}
 
@@ -195,9 +219,18 @@ func (s *AdminService) StartCraft(ctx context.Context, adminTelegramID, orderID 
 		pickupDeadline := readyAt.Add(4 * time.Hour)
 
 		if err := orders.MarkInProgress(ctx, orderID, now, readyAt, pickupDeadline); err != nil {
+			s.log.Error("start craft mark in progress failed",
+				zap.Error(err),
+				zap.Int64("order_id", orderID),
+			)
 			return err
 		}
+
 		if err := orders.NormalizeQueue(ctx); err != nil {
+			s.log.Error("start craft normalize queue failed",
+				zap.Error(err),
+				zap.Int64("order_id", orderID),
+			)
 			return err
 		}
 
@@ -208,18 +241,32 @@ func (s *AdminService) StartCraft(ctx context.Context, adminTelegramID, orderID 
 				Type:        domain.NotificationTypeCraftReady,
 				ScheduledAt: readyAt,
 			}); err != nil {
+				s.log.Error("start craft create notification failed",
+					zap.Error(err),
+					zap.Int64("order_id", orderID),
+					zap.Int64("telegram_id", *order.TelegramID),
+				)
 				return err
 			}
 		}
 
 		out, err = orders.GetByID(ctx, orderID)
 		if err != nil {
+			s.log.Error("start craft reload order failed",
+				zap.Error(err),
+				zap.Int64("order_id", orderID),
+			)
 			return err
 		}
 
 		return nil
 	})
 	if err != nil {
+		s.log.Error("start craft transaction failed",
+			zap.Error(err),
+			zap.Int64("admin_telegram_id", adminTelegramID),
+			zap.Int64("order_id", orderID),
+		)
 		return nil, err
 	}
 
