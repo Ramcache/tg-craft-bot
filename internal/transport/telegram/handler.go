@@ -84,7 +84,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		h.replyWithKeyboard(msg.Chat.ID, "Выберите действие.", mainKeyboard(user.IsAdmin), 0)
 		return
 
-	case "Заказать":
+	case "📜Заказать крафт":
 		settings, err := h.orderService.GetCraftSettings(ctx)
 		if err != nil {
 			h.reply(msg.Chat.ID, "❌Ошибка, попробуйте позже.", 0)
@@ -99,7 +99,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		_, _ = h.bot.Send(m)
 		return
 
-	case "Мой заказ":
+	case "📜Мой заказ":
 		order, err := h.orderService.GetMyActiveOrder(ctx, user.TelegramID)
 		if err != nil {
 			if err == domain.ErrOrderNotFound {
@@ -117,7 +117,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		_, _ = h.bot.Send(msgOut)
 		return
 
-	case "Админ":
+	case "🔐Админ-панель":
 		if !user.IsAdmin {
 			h.reply(msg.Chat.ID, "Нет доступа.", 0)
 			return
