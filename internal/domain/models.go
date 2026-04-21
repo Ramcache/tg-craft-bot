@@ -87,6 +87,7 @@ type Order struct {
 	ID               int64
 	UserID           *int64
 	TelegramID       *int64
+	TelegramUsername *string
 	Nickname         string
 	RecipeKey        string
 	RecipeName       string

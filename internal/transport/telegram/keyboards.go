@@ -148,6 +148,9 @@ func adminMenuKeyboard(isOpen bool) tgbotapi.InlineKeyboardMarkup {
 			tgbotapi.NewInlineKeyboardButtonData("📦Массовый заказ", "admin:bulk"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🕘Рассчитать время", "admin:calc"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(toggleLabel, toggleData),
 		),
 	)
@@ -168,11 +171,17 @@ func adminQueueItemKeyboard(section string, orderID int64) tgbotapi.InlineKeyboa
 	)
 }
 
-func adminProgressItemKeyboard(orderID int64) tgbotapi.InlineKeyboardMarkup {
+func adminProgressItemKeyboard(section string, orderID int64) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✅Завершить", fmt.Sprintf("admin:order:complete:%d", orderID)),
-			tgbotapi.NewInlineKeyboardButtonData("❌Отменить", fmt.Sprintf("admin:order:cancel:%d", orderID)),
+			tgbotapi.NewInlineKeyboardButtonData(
+				"✅Завершить",
+				fmt.Sprintf("admin:order_progress:%s:complete:%d", section, orderID),
+			),
+			tgbotapi.NewInlineKeyboardButtonData(
+				"❌Отменить",
+				fmt.Sprintf("admin:order_progress:%s:cancel:%d", section, orderID),
+			),
 		),
 	)
 }

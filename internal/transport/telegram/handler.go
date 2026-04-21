@@ -258,7 +258,7 @@ func (h *Handler) handleOrderCallback(ctx context.Context, user *domain.User, cb
 			case domain.ErrCraftClosed:
 				h.reply(cb.Message.Chat.ID, "❌Крафт на текущий момент закрыт, следите за новостями.\n.", 0)
 			case domain.ErrActiveOrderExists:
-				h.reply(cb.Message.Chat.ID, "‼️У вас уже есть активный заказ. Новый оформить нельзя.", 0)
+				h.reply(cb.Message.Chat.ID, "‼️У вас уже есть активный заказ. Нельзя сделать более 1 заказа пока он не будет готов.", 0)
 			case domain.ErrForbidden:
 				h.reply(cb.Message.Chat.ID, "🔐Этот рецепт доступен только админу.", 0)
 			default:
@@ -391,6 +391,39 @@ func (h *Handler) handleAdminCallback(ctx context.Context, user *domain.User, cb
 		return
 	}
 
+	if len(parts) == 2 && parts[1] == "calc" {
+		m := tgbotapi.NewMessage(cb.Message.Chat.ID, "Выберите рецепт для расчета времени.")
+		m.ReplyMarkup = recipesKeyboard(h.orderService.UserRecipes(true), "admin:calc:recipe:")
+		_, _ = h.bot.Send(m)
+		return
+	}
+
+	if len(parts) == 4 && parts[1] == "calc" && parts[2] == "recipe" {
+		recipeKey := parts[3]
+
+		recipe, ok := recipeByKey(h.orderService.UserRecipes(true), recipeKey)
+		if !ok {
+			h.reply(cb.Message.Chat.ID, "Рецепт не найден.", 0)
+			return
+		}
+
+		now := time.Now().In(h.loc)
+		readyAt := now.Add(recipe.Duration)
+		pickupDeadline := readyAt.Add(4 * time.Hour)
+
+		text := fmt.Sprintf(
+			"⏳Расчет времени крафта\n\n📍Заказ: %s ×%d\n🕒Если поставить сейчас: %s\n✅Крафт будет готов: %s\n📅Забрать крафт до: %s",
+			recipe.Name,
+			recipe.DefaultQty,
+			now.Format("02.01 15:04"),
+			readyAt.Format("02.01 15:04"),
+			pickupDeadline.Format("02.01 15:04"),
+		)
+
+		h.reply(cb.Message.Chat.ID, text, 0)
+		return
+	}
+
 	if len(parts) == 4 && parts[1] == "queue" {
 		switch parts[2] {
 		case "view":
@@ -431,7 +464,6 @@ func (h *Handler) handleAdminCallback(ctx context.Context, user *domain.User, cb
 				h.sendProgressScrolls(ctx, cb.Message.Chat.ID, user.TelegramID)
 				return
 			}
-
 		case "text":
 			switch parts[3] {
 			case "all":
@@ -449,13 +481,14 @@ func (h *Handler) handleAdminCallback(ctx context.Context, user *domain.User, cb
 
 	if len(parts) == 2 && parts[1] == "create" {
 		m := tgbotapi.NewMessage(cb.Message.Chat.ID, "Выберите рецепт для одиночного заказа.")
-		m.ReplyMarkup = recipesKeyboard(h.orderService.Recipes(), "admin:create:recipe:")
+		m.ReplyMarkup = recipesKeyboard(h.orderService.UserRecipes(true), "admin:create:recipe:")
 		_, _ = h.bot.Send(m)
 		return
 	}
+
 	if len(parts) == 2 && parts[1] == "bulk" {
 		m := tgbotapi.NewMessage(cb.Message.Chat.ID, "Выберите рецепт для массового заказа.")
-		m.ReplyMarkup = recipesKeyboard(h.orderService.Recipes(), "admin:bulk:recipe:")
+		m.ReplyMarkup = recipesKeyboard(h.orderService.UserRecipes(true), "admin:bulk:recipe:")
 		_, _ = h.bot.Send(m)
 		return
 	}
@@ -501,6 +534,7 @@ func (h *Handler) handleAdminCallback(ctx context.Context, user *domain.User, cb
 
 		orderID, err := strconv.ParseInt(parts[4], 10, 64)
 		if err != nil {
+			h.reply(cb.Message.Chat.ID, "Некорректный ID заказа.", 0)
 			return
 		}
 
@@ -514,7 +548,11 @@ func (h *Handler) handleAdminCallback(ctx context.Context, user *domain.User, cb
 			opErr = h.adminService.MoveToHead(ctx, user.TelegramID, orderID)
 		case "tail":
 			opErr = h.adminService.MoveToTail(ctx, user.TelegramID, orderID)
+		default:
+			h.reply(cb.Message.Chat.ID, "Неизвестное действие для очереди.", 0)
+			return
 		}
+
 		if opErr != nil {
 			h.reply(cb.Message.Chat.ID, "❌Не удалось изменить очередь.", 0)
 			return
@@ -528,7 +566,7 @@ func (h *Handler) handleAdminCallback(ctx context.Context, user *domain.User, cb
 		case "scrolls":
 			h.sendQueueScrolls(ctx, cb.Message.Chat.ID, user.TelegramID)
 		default:
-			h.sendQueueTextAll(ctx, cb.Message.Chat.ID, user.TelegramID)
+			h.reply(cb.Message.Chat.ID, "Неизвестный раздел очереди.", 0)
 		}
 		return
 	}
@@ -538,6 +576,7 @@ func (h *Handler) handleAdminCallback(ctx context.Context, user *domain.User, cb
 
 		orderID, err := strconv.ParseInt(parts[4], 10, 64)
 		if err != nil {
+			h.reply(cb.Message.Chat.ID, "Некорректный ID заказа.", 0)
 			return
 		}
 
@@ -548,9 +587,11 @@ func (h *Handler) handleAdminCallback(ctx context.Context, user *domain.User, cb
 				h.reply(cb.Message.Chat.ID, "❌Не удалось поставить в крафт.", 0)
 				return
 			}
+
 			if err := h.notifyService.SendCraftStarted(ctx, order); err != nil {
 				h.log.Error("send craft started", zap.Error(err), zap.Int64("order_id", order.ID))
 			}
+
 			h.reply(cb.Message.Chat.ID, "✅Заказ поставлен на крафт.", 0)
 
 			switch section {
@@ -559,7 +600,7 @@ func (h *Handler) handleAdminCallback(ctx context.Context, user *domain.User, cb
 			case "scrolls":
 				h.sendQueueScrolls(ctx, cb.Message.Chat.ID, user.TelegramID)
 			default:
-				h.sendQueueTextAll(ctx, cb.Message.Chat.ID, user.TelegramID)
+				h.reply(cb.Message.Chat.ID, "Неизвестный раздел очереди.", 0)
 			}
 			return
 
@@ -568,6 +609,7 @@ func (h *Handler) handleAdminCallback(ctx context.Context, user *domain.User, cb
 				h.reply(cb.Message.Chat.ID, "❌Не удалось отменить заказ.", 0)
 				return
 			}
+
 			h.reply(cb.Message.Chat.ID, "Заказ отменен.", 0)
 
 			switch section {
@@ -576,17 +618,68 @@ func (h *Handler) handleAdminCallback(ctx context.Context, user *domain.User, cb
 			case "scrolls":
 				h.sendQueueScrolls(ctx, cb.Message.Chat.ID, user.TelegramID)
 			default:
-				h.sendQueueTextAll(ctx, cb.Message.Chat.ID, user.TelegramID)
+				h.reply(cb.Message.Chat.ID, "Неизвестный раздел очереди.", 0)
 			}
 			return
 
+		default:
+			h.reply(cb.Message.Chat.ID, "Неизвестное действие с заказом.", 0)
+			return
+		}
+	}
+
+	if len(parts) == 5 && parts[1] == "order_progress" {
+		section := parts[2]
+
+		orderID, err := strconv.ParseInt(parts[4], 10, 64)
+		if err != nil {
+			h.reply(cb.Message.Chat.ID, "Некорректный ID заказа.", 0)
+			return
+		}
+
+		switch parts[3] {
 		case "complete":
 			if err := h.adminService.CompleteOrder(ctx, user.TelegramID, orderID); err != nil {
 				h.reply(cb.Message.Chat.ID, "❌Не удалось завершить заказ.", 0)
 				return
 			}
+
 			h.reply(cb.Message.Chat.ID, "Заказ отмечен как выданный.", 0)
-			h.sendProgress(ctx, cb.Message.Chat.ID, user.TelegramID)
+
+			switch section {
+			case "all":
+				h.sendProgress(ctx, cb.Message.Chat.ID, user.TelegramID)
+			case "potions":
+				h.sendProgressPotions(ctx, cb.Message.Chat.ID, user.TelegramID)
+			case "scrolls":
+				h.sendProgressScrolls(ctx, cb.Message.Chat.ID, user.TelegramID)
+			default:
+				h.reply(cb.Message.Chat.ID, "Неизвестный раздел списка в крафте.", 0)
+			}
+			return
+
+		case "cancel":
+			if err := h.adminService.CancelOrder(ctx, user.TelegramID, orderID); err != nil {
+				h.reply(cb.Message.Chat.ID, "❌Не удалось отменить заказ.", 0)
+				return
+			}
+
+			h.reply(cb.Message.Chat.ID, "Заказ отменен.", 0)
+
+			switch section {
+			case "all":
+				h.sendProgress(ctx, cb.Message.Chat.ID, user.TelegramID)
+			case "potions":
+				h.sendProgressPotions(ctx, cb.Message.Chat.ID, user.TelegramID)
+			case "scrolls":
+				h.sendProgressScrolls(ctx, cb.Message.Chat.ID, user.TelegramID)
+			default:
+				h.reply(cb.Message.Chat.ID, "Неизвестный раздел списка в крафте.", 0)
+			}
+			return
+
+		default:
+			h.reply(cb.Message.Chat.ID, "Неизвестное действие для списка в крафте.", 0)
 			return
 		}
 	}
@@ -636,7 +729,7 @@ func (h *Handler) sendProgress(ctx context.Context, chatID, adminTelegramID int6
 	}
 	for _, o := range items {
 		msg := tgbotapi.NewMessage(chatID, formatOrder(&o, h.loc))
-		msg.ReplyMarkup = adminProgressItemKeyboard(o.ID)
+		msg.ReplyMarkup = adminProgressItemKeyboard("all", o.ID)
 		_, _ = h.bot.Send(msg)
 	}
 }
@@ -780,22 +873,19 @@ func recipeByKey(recipes []domain.Recipe, key string) (domain.Recipe, bool) {
 func formatOrder(o *domain.Order, loc *time.Location) string {
 	var extra strings.Builder
 	if o.QueuePos != nil {
-		extra.WriteString(fmt.Sprintf("📈Место в очереди: %d\n", *o.QueuePos))
+		extra.WriteString(fmt.Sprintf("Место в очереди: %d\n", *o.QueuePos))
 	}
 	if o.ReadyAt != nil {
-		extra.WriteString(fmt.Sprintf("✅ Готово: %s\n", o.ReadyAt.In(loc).Format("02.01 15:04")))
+		extra.WriteString(fmt.Sprintf("Готово: %s\n", o.ReadyAt.In(loc).Format("02.01 15:04")))
 	}
 	if o.PickupDeadlineAt != nil {
-		extra.WriteString(fmt.Sprintf("📅Забрать до: %s\n", o.PickupDeadlineAt.In(loc).Format("02.01 15:04")))
+		extra.WriteString(fmt.Sprintf("Забрать до: %s\n", o.PickupDeadlineAt.In(loc).Format("02.01 15:04")))
 	}
 
-	tgText := "нет"
-	if o.TelegramID != nil {
-		tgText = strconv.FormatInt(*o.TelegramID, 10)
-	}
+	tgText := formatTelegramContact(o)
 
 	return fmt.Sprintf(
-		"📍Заказ #%d\n❗️Статус: %s\n📜Рецепт: %s ×%d\n📝Ник: %s\n📝TG: %s\n%s📅Создан: %s",
+		"Заказ #%d\nСтатус: %s\nРецепт: %s ×%d\nНик: %s\nTG: %s\n%sСоздан: %s",
 		o.ID,
 		RuStatus(o.Status),
 		o.RecipeName,
@@ -813,10 +903,7 @@ func formatQueueOrder(o *domain.Order, loc *time.Location) string {
 		pos = *o.QueuePos
 	}
 
-	tgText := "нет"
-	if o.TelegramID != nil {
-		tgText = strconv.FormatInt(*o.TelegramID, 10)
-	}
+	tgText := formatTelegramContact(o)
 
 	return fmt.Sprintf(
 		"Очередь #%d\nЗаказ #%d\nРецепт: %s ×%d\nНик: %s\nTG: %s\nСоздан: %s",
@@ -843,7 +930,7 @@ func (h *Handler) sendProgressPotions(ctx context.Context, chatID, adminTelegram
 
 	for _, o := range items {
 		msg := tgbotapi.NewMessage(chatID, formatOrder(&o, h.loc))
-		msg.ReplyMarkup = adminProgressItemKeyboard(o.ID)
+		msg.ReplyMarkup = adminProgressItemKeyboard("potions", o.ID)
 		_, _ = h.bot.Send(msg)
 	}
 }
@@ -861,7 +948,19 @@ func (h *Handler) sendProgressScrolls(ctx context.Context, chatID, adminTelegram
 
 	for _, o := range items {
 		msg := tgbotapi.NewMessage(chatID, formatOrder(&o, h.loc))
-		msg.ReplyMarkup = adminProgressItemKeyboard(o.ID)
+		msg.ReplyMarkup = adminProgressItemKeyboard("scrolls", o.ID)
 		_, _ = h.bot.Send(msg)
 	}
+}
+
+func formatTelegramContact(o *domain.Order) string {
+	if o.TelegramUsername != nil && strings.TrimSpace(*o.TelegramUsername) != "" {
+		return "@" + strings.TrimSpace(*o.TelegramUsername)
+	}
+
+	if o.TelegramID != nil {
+		return "TG ID: " + strconv.FormatInt(*o.TelegramID, 10)
+	}
+
+	return "нет"
 }

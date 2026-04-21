@@ -163,42 +163,6 @@ func (r *UserStateRepository) Get(ctx context.Context, userID int64) (*domain.Us
 	return &s, nil
 }
 
-func (r *OrderRepository) ListQueueByKinds(ctx context.Context, kinds ...domain.RecipeType) ([]domain.Order, error) {
-	if len(kinds) == 0 {
-		return r.ListQueue(ctx)
-	}
-
-	args := make([]string, 0, len(kinds))
-	for _, k := range kinds {
-		args = append(args, string(k))
-	}
-
-	q := `
-select id, user_id, telegram_id, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
-       queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
-       completed_at, cancelled_at, admin_comment, version
-from orders
-where status = 'new'
-  and recipe_kind = any($1)
-order by queue_pos asc, created_at asc, id asc
-`
-	rows, err := r.db.Query(ctx, q, args)
-	if err != nil {
-		return nil, fmt.Errorf("list queue by kinds: %w", err)
-	}
-	defer rows.Close()
-
-	var out []domain.Order
-	for rows.Next() {
-		o, err := scanOrder(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *o)
-	}
-	return out, rows.Err()
-}
-
 func (r *UserStateRepository) Clear(ctx context.Context, userID int64) error {
 	_, err := r.db.Exec(ctx, `delete from user_states where user_id = $1`, userID)
 	if err != nil {
@@ -268,10 +232,10 @@ func (r *OrderRepository) CreateAtTail(ctx context.Context, o *domain.Order) (*d
 
 	q := `
 insert into orders (
-    user_id, telegram_id, nickname, recipe_key, recipe_name, recipe_kind, qty,
+    user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty,
     status, queue_pos, created_at, queued_at, version
-) values ($1,$2,$3,$4,$5,$6,$7,'new',$8,now(),now(),1)
-returning id, user_id, telegram_id, nickname, recipe_key, recipe_name, recipe_kind, qty,
+) values ($1,$2,$3,$4,$5,$6,$7,$8,'new',$9,now(),now(),1)
+returning id, user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty,
           status, queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
           completed_at, cancelled_at, admin_comment, version
 `
@@ -279,11 +243,36 @@ returning id, user_id, telegram_id, nickname, recipe_key, recipe_name, recipe_ki
 	err = r.db.QueryRow(
 		ctx,
 		q,
-		o.UserID, o.TelegramID, o.Nickname, o.RecipeKey, o.RecipeName, o.RecipeKind, o.Qty, pos,
+		o.UserID,
+		o.TelegramID,
+		o.TelegramUsername,
+		o.Nickname,
+		o.RecipeKey,
+		o.RecipeName,
+		o.RecipeKind,
+		o.Qty,
+		pos,
 	).Scan(
-		&out.ID, &out.UserID, &out.TelegramID, &out.Nickname, &out.RecipeKey, &out.RecipeName, &out.RecipeKind, &out.Qty,
-		&out.Status, &out.QueuePos, &out.CreatedAt, &out.QueuedAt, &out.StartedAt, &out.ReadyAt, &out.PickupDeadlineAt,
-		&out.CompletedAt, &out.CancelledAt, &out.AdminComment, &out.Version,
+		&out.ID,
+		&out.UserID,
+		&out.TelegramID,
+		&out.TelegramUsername,
+		&out.Nickname,
+		&out.RecipeKey,
+		&out.RecipeName,
+		&out.RecipeKind,
+		&out.Qty,
+		&out.Status,
+		&out.QueuePos,
+		&out.CreatedAt,
+		&out.QueuedAt,
+		&out.StartedAt,
+		&out.ReadyAt,
+		&out.PickupDeadlineAt,
+		&out.CompletedAt,
+		&out.CancelledAt,
+		&out.AdminComment,
+		&out.Version,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create order: %w", err)
@@ -293,7 +282,7 @@ returning id, user_id, telegram_id, nickname, recipe_key, recipe_name, recipe_ki
 
 func (r *OrderRepository) GetActiveByTelegramID(ctx context.Context, telegramID int64) (*domain.Order, error) {
 	q := `
-select id, user_id, telegram_id, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
+select id, user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
        queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
        completed_at, cancelled_at, admin_comment, version
 from orders
@@ -306,7 +295,7 @@ limit 1
 
 func (r *OrderRepository) GetByID(ctx context.Context, id int64) (*domain.Order, error) {
 	q := `
-select id, user_id, telegram_id, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
+select id, user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
        queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
        completed_at, cancelled_at, admin_comment, version
 from orders
@@ -317,7 +306,7 @@ where id = $1
 
 func (r *OrderRepository) GetByIDForUpdate(ctx context.Context, id int64) (*domain.Order, error) {
 	q := `
-select id, user_id, telegram_id, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
+select id, user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
        queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
        completed_at, cancelled_at, admin_comment, version
 from orders
@@ -423,7 +412,7 @@ where id = $1 and status in ('ready', 'in_progress')
 
 func (r *OrderRepository) ListQueue(ctx context.Context) ([]domain.Order, error) {
 	q := `
-select id, user_id, telegram_id, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
+select id, user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
        queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
        completed_at, cancelled_at, admin_comment, version
 from orders
@@ -447,13 +436,49 @@ order by queue_pos asc, created_at asc, id asc
 	return out, rows.Err()
 }
 
+func (r *OrderRepository) ListQueueByKinds(ctx context.Context, kinds ...domain.RecipeType) ([]domain.Order, error) {
+	if len(kinds) == 0 {
+		return r.ListQueue(ctx)
+	}
+
+	args := make([]string, 0, len(kinds))
+	for _, k := range kinds {
+		args = append(args, string(k))
+	}
+
+	q := `
+select id, user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
+       queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
+       completed_at, cancelled_at, admin_comment, version
+from orders
+where status = 'new'
+  and recipe_kind = any($1)
+order by queue_pos asc, created_at asc, id asc
+`
+	rows, err := r.db.Query(ctx, q, args)
+	if err != nil {
+		return nil, fmt.Errorf("list queue by kinds: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.Order
+	for rows.Next() {
+		o, err := scanOrder(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *o)
+	}
+	return out, rows.Err()
+}
+
 func (r *OrderRepository) ListByStatus(ctx context.Context, statuses ...domain.OrderStatus) ([]domain.Order, error) {
 	if len(statuses) == 0 {
 		return nil, nil
 	}
 
 	q := `
-select id, user_id, telegram_id, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
+select id, user_id, telegram_id, telegram_username, nickname, recipe_key, recipe_name, recipe_kind, qty, status,
        queue_pos, created_at, queued_at, started_at, ready_at, pickup_deadline_at,
        completed_at, cancelled_at, admin_comment, version
 from orders
@@ -578,7 +603,6 @@ func (r *OrderRepository) MoveToHead(ctx context.Context, id int64) error {
 		return domain.ErrOrderInvalidStatus
 	}
 
-	// Сдвигаем всех на +1, текущему ставим 1.
 	_, err = r.db.Exec(ctx, `update orders set queue_pos = queue_pos + 1 where status = 'new' and id <> $1`, id)
 	if err != nil {
 		return fmt.Errorf("shift queue for head: %w", err)
@@ -698,9 +722,26 @@ func scanOrder(row interface {
 }) (*domain.Order, error) {
 	var o domain.Order
 	err := row.Scan(
-		&o.ID, &o.UserID, &o.TelegramID, &o.Nickname, &o.RecipeKey, &o.RecipeName, &o.RecipeKind, &o.Qty,
-		&o.Status, &o.QueuePos, &o.CreatedAt, &o.QueuedAt, &o.StartedAt, &o.ReadyAt, &o.PickupDeadlineAt,
-		&o.CompletedAt, &o.CancelledAt, &o.AdminComment, &o.Version,
+		&o.ID,
+		&o.UserID,
+		&o.TelegramID,
+		&o.TelegramUsername,
+		&o.Nickname,
+		&o.RecipeKey,
+		&o.RecipeName,
+		&o.RecipeKind,
+		&o.Qty,
+		&o.Status,
+		&o.QueuePos,
+		&o.CreatedAt,
+		&o.QueuedAt,
+		&o.StartedAt,
+		&o.ReadyAt,
+		&o.PickupDeadlineAt,
+		&o.CompletedAt,
+		&o.CancelledAt,
+		&o.AdminComment,
+		&o.Version,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
