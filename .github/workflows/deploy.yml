@@ -1,0 +1,65 @@
+name: Deploy Bot
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.7'
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build Linux binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bot ./cmd/bot
+
+      - name: Write env file
+        run: |
+          cat <<'EOF' > .env
+          ${{ secrets.BOT_ENV_FILE }}
+          EOF
+
+      - name: Copy files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          source: "bot,.env,migrations"
+          target: "/opt/tg-craft-bot"
+
+      - name: Run migrations and restart
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            set -e
+            cd /opt/tg-craft-bot
+
+            chmod +x /opt/tg-craft-bot/bot
+
+            if [ ! -f goose ]; then
+              curl -L https://github.com/pressly/goose/releases/download/v3.22.1/goose_linux_x86_64 -o goose
+              chmod +x goose
+            fi
+
+            ./goose -dir ./migrations postgres "postgres://postgres:postgres@localhost:5432/tg_craft_bot?sslmode=disable" up
+
+            systemctl restart tg-bot
+            systemctl status tg-bot --no-pager

@@ -1,0 +1,213 @@
+version: '3'
+
+dotenv: ['.env']
+
+vars:
+  BIN: bin/api
+  MAIN: ./cmd/api/main.go
+  MIGRATIONS_DIR: migrations
+  DATABASE_URL: "{{.POSTGRES_DSN | default .ENV.POSTGRES_DSN}}"
+  SWAG_DIR: docs
+
+
+  # Tool versions (pin for determinism)
+  SWAG_VERSION: v1.16.3
+  STATICCHECK_VERSION: 2025.1
+
+  # Optional build metadata (won't change server logic if unset)
+  VERSION: "{{.VERSION | default .ENV.VERSION}}"
+  COMMIT: "{{.COMMIT | default .ENV.COMMIT}}"
+  BUILD_DATE: "{{.BUILD_DATE | default .ENV.BUILD_DATE}}"
+
+tasks:
+  debug:name:
+    cmds:
+      - echo NAME="{{.NAME}}"
+      - echo name="{{.name}}"
+  # === 🏁 ОСНОВНЫЕ ===
+  run:
+    desc: Запуск API локально
+    cmds:
+      - go run {{.MAIN}}
+
+  tidy:
+    desc: Синхронизация зависимостей
+    cmds:
+      # ⚙️ Удаляем docs перед tidy, чтобы избежать ошибки на CI
+      - rm -rf {{.SWAG_DIR}} || true
+      - go mod tidy
+      - go mod verify
+  debug:
+    cmds:
+      - echo DSN={{.ENV.POSTGRES_DSN}}
+
+  fmt:
+    desc: Форматирование кода
+    cmds:
+      - go fmt ./...
+      - |
+        if command -v goimports > /dev/null; then
+          goimports -w .
+        else
+          echo "⚠️ goimports не установлен. Установите: go install golang.org/x/tools/cmd/goimports@latest"
+        fi
+
+  clean:
+    desc: Очистка бинарников и кэша
+    cmds:
+      - rm -rf {{.BIN}} || true
+      - go clean -testcache
+
+  # === 🧩 MIGRATIONS (goose) ===
+  migrate:up:
+    desc: Применить все миграции
+    cmds:
+      - goose -dir {{.MIGRATIONS_DIR}} postgres "{{.DATABASE_URL}}" up
+
+  migrate:down:
+    desc: Откатить последнюю миграцию
+    cmds:
+      - goose -dir {{.MIGRATIONS_DIR}} postgres "{{.DATABASE_URL}}" down
+
+  migrate:redo:
+    desc: Повторить последнюю миграцию
+    cmds:
+      - goose -dir {{.MIGRATIONS_DIR}} postgres "{{.DATABASE_URL}}" redo
+
+  migrate:status:
+    desc: Показать статус миграций
+    cmds:
+      - goose -dir {{.MIGRATIONS_DIR}} postgres "{{.DATABASE_URL}}" status
+
+  migrate:create:
+    desc: >
+      Создать новую миграцию.
+      PowerShell:
+        $env:NAME="create_users"
+        task migrate:create
+    vars:
+      NAME: '{{.NAME | default .ENV.NAME}}'
+    requires:
+      vars: [ NAME ]
+    cmds:
+      - goose -dir {{.MIGRATIONS_DIR}} create {{.NAME}} sql
+
+  # === 📘 SWAGGER ===
+  swagger:install:
+    desc: Установка swag CLI (pinned)
+    cmds:
+      - |
+        if command -v swag > /dev/null; then
+          echo "✅ swag already installed: $(swag --version 2>/dev/null || true)"
+        else
+          echo "Installing swag {{.SWAG_VERSION}}..."
+          go install github.com/swaggo/swag/cmd/swag@{{.SWAG_VERSION}}
+        fi
+
+  swagger:gen:
+    desc: Генерация Swagger-документации (incremental)
+    deps: [swagger:install]
+    cmds:
+      - swag init -g {{.MAIN}} -o {{.SWAG_DIR}}
+      - echo "✅ Swagger docs обновлены в {{.SWAG_DIR}}"
+    sources:
+      - cmd/**/*.go
+      - internal/**/*.go
+      - pkg/**/*.go
+      - ./go.mod
+      - ./go.sum
+      - cmd/api/**/*
+    generates:
+      - "{{.SWAG_DIR}}/docs.go"
+      - "{{.SWAG_DIR}}/swagger.json"
+      - "{{.SWAG_DIR}}/swagger.yaml"
+
+  # === 🧰 GIT ===
+  git:acp:
+    desc: Добавить, закоммитить и запушить изменения
+    vars:
+      msg: '{{.msg | default "chore: update"}}'
+    cmds:
+      - git add .
+      - git commit -m "{{.msg}}"
+      - git push origin HEAD
+
+  git:branch:
+    desc: Создать и перейти в новую ветку
+    cmds:
+      - git checkout -b {{.name}}
+
+  # ==== CI/CD Tasks ====
+  tools:staticcheck:
+    desc: Install staticcheck (pinned)
+    cmds:
+      - |
+        if command -v staticcheck > /dev/null; then
+          echo "✅ staticcheck already installed: $(staticcheck --version 2>/dev/null || true)"
+        else
+          echo "Installing staticcheck {{.STATICCHECK_VERSION}}..."
+          go install honnef.co/go/tools/cmd/staticcheck@{{.STATICCHECK_VERSION}}
+        fi
+
+  lint:
+    desc: Run go vet and staticcheck (block SA; skip style ST/S)
+    cmds:
+      - go vet ./...
+      - staticcheck -checks "all,-ST1000,-ST1003,-ST1020,-ST1021,-S1009,-S1016" ./...
+
+  lint:strict:
+    desc: Run full staticcheck including style (ST/S) — for refactoring
+    cmds:
+      - go vet ./...
+      - staticcheck ./...
+
+  test:
+    desc: Run all tests locally with race detector
+    cmds:
+      - CGO_ENABLED=1 go test ./... -v -race -cover
+
+  test:ci:
+    desc: Run all tests in CI (faster, no race)
+    cmds:
+      - go test ./... -v -cover
+
+  build:
+    desc: Build binary for Linux amd64 (prod)
+    cmds:
+      - mkdir -p "$(dirname {{.BIN}})"
+      - |
+        LDFLAGS="-s -w"
+        if [ -n "{{.VERSION}}" ]; then LDFLAGS="$LDFLAGS -X main.version={{.VERSION}}"; fi
+        if [ -n "{{.COMMIT}}" ]; then LDFLAGS="$LDFLAGS -X main.commit={{.COMMIT}}"; fi
+        if [ -n "{{.BUILD_DATE}}" ]; then LDFLAGS="$LDFLAGS -X main.date={{.BUILD_DATE}}"; fi
+        GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o {{.BIN}} ./cmd/api
+
+  ci:
+    desc: Run full CI pipeline (lint, test:ci, swagger, build)
+    deps: [lint, test:ci, swagger:gen, build]
+
+  # Optional: быстрый CI (не ломает текущую логику, просто доп. команда)
+  ci:fast:
+    desc: Faster CI pipeline (lint, test:ci, build) — без swagger
+    deps: [lint, test:ci, build]
+
+  # === ⚙️ HELP ===
+  help:
+    desc: Показать список всех команд
+    cmds:
+      - echo "📘 Доступные команды:"
+      - task --list
+
+  monitor:up:
+    desc: Run full monitoring stack (Prometheus + Grafana + Loki + Promtail)
+    cmds:
+      - docker compose -f monitorings/docker-compose.yml up -d
+      - |
+        echo Grafana: http://localhost:3030 "(admin/admin)"
+        echo Prometheus: http://localhost:9090
+        echo Loki API: http://localhost:3100
+
+  monitor:down:
+    desc: Stop monitoring stack
+    cmds:
+      - docker compose -f monitorings/docker-compose.yml down
