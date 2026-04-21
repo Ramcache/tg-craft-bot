@@ -313,13 +313,29 @@ where o.id = $1
 
 func (r *OrderRepository) GetByIDForUpdate(ctx context.Context, id int64) (*domain.Order, error) {
 	q := `
-select o.id, o.user_id, o.telegram_id, u.username, o.nickname, o.recipe_key, o.recipe_name, o.recipe_kind, o.qty, o.status,
-       o.queue_pos, o.created_at, o.queued_at, o.started_at, o.ready_at, o.pickup_deadline_at,
-       o.completed_at, o.cancelled_at, o.admin_comment, o.version
+select o.id,
+       o.user_id,
+       o.telegram_id,
+       (select u.username from users u where u.id = o.user_id) as telegram_username,
+       o.nickname,
+       o.recipe_key,
+       o.recipe_name,
+       o.recipe_kind,
+       o.qty,
+       o.status,
+       o.queue_pos,
+       o.created_at,
+       o.queued_at,
+       o.started_at,
+       o.ready_at,
+       o.pickup_deadline_at,
+       o.completed_at,
+       o.cancelled_at,
+       o.admin_comment,
+       o.version
 from orders o
-left join users u on u.id = o.user_id
 where o.id = $1
-for update
+for update of o
 `
 	return scanOrder(r.db.QueryRow(ctx, q, id))
 }
