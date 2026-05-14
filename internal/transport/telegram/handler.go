@@ -103,10 +103,10 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		order, err := h.orderService.GetMyActiveOrder(ctx, user.TelegramID)
 		if err != nil {
 			if err == domain.ErrOrderNotFound {
-				h.reply(msg.Chat.ID, "Активного заказа нет.", 0)
+				h.reply(msg.Chat.ID, "❌Активного заказа нет.", 0)
 				return
 			}
-			h.reply(msg.Chat.ID, "Ошибка, попробуйте позже.", 0)
+			h.reply(msg.Chat.ID, "❌Ошибка, попробуйте позже.", 0)
 			return
 		}
 
@@ -127,7 +127,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			h.reply(msg.Chat.ID, "Ошибка, попробуйте позже.", 0)
 			return
 		}
-		m := tgbotapi.NewMessage(msg.Chat.ID, "Админ-панель")
+		m := tgbotapi.NewMessage(msg.Chat.ID, "🔐Админ-панель")
 		m.ReplyMarkup = adminMenuKeyboard(settings.IsOpen)
 		_, _ = h.bot.Send(m)
 		return
@@ -392,7 +392,7 @@ func (h *Handler) handleAdminCallback(ctx context.Context, user *domain.User, cb
 	}
 
 	if len(parts) == 2 && parts[1] == "calc" {
-		m := tgbotapi.NewMessage(cb.Message.Chat.ID, "Выберите рецепт для расчета времени.")
+		m := tgbotapi.NewMessage(cb.Message.Chat.ID, "⏰Выберите рецепт для расчета времени.")
 		m.ReplyMarkup = recipesKeyboard(h.orderService.UserRecipes(true), "admin:calc:recipe:")
 		_, _ = h.bot.Send(m)
 		return
@@ -873,7 +873,7 @@ func recipeByKey(recipes []domain.Recipe, key string) (domain.Recipe, bool) {
 func formatOrder(o *domain.Order, loc *time.Location) string {
 	var extra strings.Builder
 	if o.QueuePos != nil {
-		extra.WriteString(fmt.Sprintf("Место в очереди: %d\n", *o.QueuePos))
+		extra.WriteString(fmt.Sprintf("📈Место в очереди: %d\n", *o.QueuePos))
 	}
 	if o.ReadyAt != nil {
 		extra.WriteString(fmt.Sprintf("Готово: %s\n", o.ReadyAt.In(loc).Format("02.01 15:04")))
@@ -885,7 +885,7 @@ func formatOrder(o *domain.Order, loc *time.Location) string {
 	tgText := formatTelegramContact(o)
 
 	return fmt.Sprintf(
-		"Заказ #%d\nСтатус: %s\nРецепт: %s ×%d\nНик: %s\nTG: %s\n%sСоздан: %s",
+		"📍Заказ #%d\n❗️Статус: %s\n📜Рецепт: %s ×%d\n📝Ник: %s\n📝TG: %s\n%s📅Создан: %s",
 		o.ID,
 		RuStatus(o.Status),
 		o.RecipeName,
